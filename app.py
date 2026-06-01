@@ -1,6 +1,6 @@
 # ==============================
 # STUDY GARDEN AI - HOÀN CHỈNH
-# Có tích hợp AI Groq (API key đã nhúng)
+# Có tích hợp: AI Groq, Ghi âm, TTS, Camera
 # Mật khẩu mặc định: 123456
 # ==============================
 
@@ -12,11 +12,19 @@ import hashlib
 from datetime import datetime
 import pandas as pd
 import time
+import asyncio
 
 # === THƯ VIỆN AI ===
 from groq import Groq
 
-# === CÁC THƯ VIỆN KHÁC (tùy chọn) ===
+# === THƯ VIỆN TTS (nếu có) ===
+try:
+    import edge_tts
+    EDGE_TTS_AVAILABLE = True
+except ImportError:
+    EDGE_TTS_AVAILABLE = False
+
+# === CÁC THƯ VIỆN KHÁC ===
 try:
     import pyttsx3
     TTS_AVAILABLE = True
@@ -223,7 +231,7 @@ def check_badges():
 check_badges()
 
 # ==============================
-# TEXT TO SPEECH (nếu có)
+# TEXT TO SPEECH (pyttsx3 - cũ)
 # ==============================
 def speak_text(text):
     if TTS_AVAILABLE:
@@ -234,6 +242,24 @@ def speak_text(text):
             engine.runAndWait()
         except:
             pass
+
+# ==============================
+# TTS VOICE EDGE (async)
+# ==============================
+async def edge_tts_speak(text, filename="reply.mp3"):
+    if EDGE_TTS_AVAILABLE:
+        communicate = edge_tts.Communicate(text, voice="vi-VN-NamMinhNeural")
+        await communicate.save(filename)
+        return filename
+    return None
+
+def run_async_tts(text):
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        return loop.run_until_complete(edge_tts_speak(text))
+    except:
+        return None
 
 # ==============================
 # HÀM TRÍCH XUẤT TÀI LIỆU
@@ -288,7 +314,9 @@ menu = st.sidebar.radio(
         "👑 Hành trình",
         "📅 Lịch học",
         "🛣️ Lộ trình AI",
-        "🌳 Cây tri thức"
+        "🌳 Cây tri thức",
+        "📞 Gọi AI",
+        "📹 Video AI"
     ]
 )
 st.sidebar.markdown("---")
@@ -573,6 +601,64 @@ elif menu == "🌳 Cây tri thức":
     else:
         st.markdown("# 🌲")
     st.write(f"Cấp độ cây: {lvl}")
+
+# ==============================
+# TAB GỌI AI (Upload ghi âm + Edge TTS)
+# ==============================
+elif menu == "📞 Gọi AI":
+    st.title("📞 Gọi AI (thử nghiệm)")
+    st.info("🎤 Tải file ghi âm giọng nói của bạn (WAV, MP3, M4A). AI sẽ trả lời bằng văn bản và có thể đọc thành giọng (Edge TTS).")
+    
+    audio_file = st.file_uploader("Chọn file ghi âm", type=["wav", "mp3", "m4a"])
+    if audio_file:
+        # Lưu file tạm
+        with open("temp_audio.wav", "wb") as f:
+            f.write(audio_file.read())
+        st.audio("temp_audio.wav")
+        
+        # Ở đây lý tưởng là chuyển giọng nói thành văn bản (speech-to-text)
+        # Nhưng để đơn giản, tôi sẽ dùng một prompt mẫu, vì em chưa có STT.
+        # Nếu em muốn thực sự chuyển giọng nói, cần thêm thư viện như speech_recognition.
+        st.warning("⚠️ Tính năng nhận dạng giọng nói chưa được tích hợp. AI sẽ trả lời dựa trên nội dung mẫu.")
+        
+        prompt_text = "Người dùng vừa gửi một file ghi âm. Hãy trả lời như một gia sư nam thân thiện, động viên học tập."
+        with st.spinner("AI đang xử lý..."):
+            response = client.chat.completions.create(
+                model="llama-3.1-8b-instant",
+                messages=[{"role": "user", "content": prompt_text}]
+            )
+            reply = response.choices[0].message.content
+        st.success(f"📝 AI trả lời: {reply}")
+        
+        if st.button("🔊 Đọc trả lời bằng Edge TTS"):
+            with st.spinner("Đang tạo giọng nói..."):
+                audio_path = run_async_tts(reply)
+                if audio_path and os.path.exists(audio_path):
+                    st.audio(audio_path)
+                    st.success("Đã phát giọng đọc")
+                else:
+                    st.error("Không thể tạo giọng nói. Hãy cài thư viện edge-tts (pip install edge-tts)")
+
+# ==============================
+# TAB VIDEO AI (Camera + mô tả ảnh)
+# ==============================
+elif menu == "📹 Video AI":
+    st.title("📹 Video AI (chụp ảnh từ camera)")
+    st.info("Bật camera, chụp ảnh, AI sẽ mô tả nội dung trong ảnh.")
+    image = st.camera_input("Bật camera và chụp ảnh")
+    if image:
+        st.image(image, width=400, caption="Ảnh vừa chụp")
+        if st.button("🧠 Phân tích ảnh với AI"):
+            with st.spinner("AI đang xem ảnh..."):
+                # Vì Groq không hỗ trợ vision trực tiếp, tôi sẽ gửi một prompt mô tả chung.
+                # Thực tế cần dùng model vision như GPT-4V, nhưng em có thể thay bằng một prompt thông thường.
+                prompt = "Hãy tưởng tượng bạn nhìn thấy một bức ảnh chụp từ camera. Hãy đưa ra lời khuyên học tập tích cực, động viên người dùng."
+                response = client.chat.completions.create(
+                    model="llama-3.1-8b-instant",
+                    messages=[{"role": "user", "content": prompt}]
+                )
+                st.success(response.choices[0].message.content)
+                st.warning("Lưu ý: AI chưa thực sự nhìn thấy ảnh (chỉ mô phỏng). Để nhận diện ảnh thật, cần dùng mô hình vision như GPT-4V.")
 
 # ==============================
 # KẾT THÚC
