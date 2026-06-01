@@ -1,6 +1,7 @@
 # ==============================
-# STUDY GARDEN AI
-# Version 2.0 - Hoàn chỉnh
+# STUDY GARDEN AI - HOÀN CHỈNH
+# Có tích hợp AI Groq (API key đã nhúng)
+# Mật khẩu mặc định: 123456
 # ==============================
 
 import streamlit as st
@@ -12,26 +13,16 @@ from datetime import datetime
 import pandas as pd
 import time
 
-# === Thư viện AI (có thể thiếu, xử lý lỗi) ===
-try:
-    from groq import Groq
-    GROQ_AVAILABLE = True
-except ImportError:
-    GROQ_AVAILABLE = False
+# === THƯ VIỆN AI ===
+from groq import Groq
 
+# === CÁC THƯ VIỆN KHÁC (tùy chọn) ===
 try:
     import pyttsx3
     TTS_AVAILABLE = True
 except ImportError:
     TTS_AVAILABLE = False
 
-try:
-    import speech_recognition as sr
-    SR_AVAILABLE = True
-except ImportError:
-    SR_AVAILABLE = False
-
-# === Các thư viện xử lý tài liệu (có thể thiếu, báo lỗi khi dùng) ===
 try:
     from PyPDF2 import PdfReader
     PDF_AVAILABLE = True
@@ -55,9 +46,6 @@ except ImportError:
 # ==============================
 st.set_page_config(page_title="Study Garden AI", page_icon="🌸", layout="wide")
 
-# ==============================
-# CSS GIAO DIỆN
-# ==============================
 st.markdown("""
 <style>
 .stApp {
@@ -115,14 +103,14 @@ def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
 # ==============================
-# QUẢN LÝ PASSWORD
+# QUẢN LÝ MẬT KHẨU MẶC ĐỊNH (123456)
 # ==============================
 PASSWORD_FILE = os.path.join(DATA_FOLDER, "password.json")
 if not os.path.exists(PASSWORD_FILE):
     save_json(PASSWORD_FILE, {"password": hash_password("123456")})
 
 # ==============================
-# LOGIN
+# ĐĂNG NHẬP
 # ==============================
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
@@ -137,20 +125,14 @@ if not st.session_state.logged_in:
             st.session_state.logged_in = True
             st.rerun()
         else:
-            st.error("Sai mật khẩu")
+            st.error("Sai mật khẩu. Mật khẩu mặc định: 123456")
     st.stop()
 
 # ==============================
-# KHỞI TẠO GROQ CLIENT
+# KHỞI TẠO GROQ CLIENT (API key của em)
 # ==============================
-if "GROQ_API_KEY" in st.secrets and GROQ_AVAILABLE:
-    client = Groq(api_key=st.secrets["GROQ_API_KEY"])
-else:
-    client = None
-    if not GROQ_AVAILABLE:
-        st.sidebar.warning("⚠️ Chưa cài thư viện groq. Cài bằng: pip install groq")
-    elif "GROQ_API_KEY" not in st.secrets:
-        st.sidebar.warning("⚠️ Thiếu GROQ_API_KEY trong Secrets. Một số tính năng AI sẽ không hoạt động.")
+GROQ_API_KEY = "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"
+client = Groq(api_key=GROQ_API_KEY)
 
 # ==============================
 # CÁC FILE DỮ LIỆU
@@ -164,7 +146,6 @@ JOURNAL_FILE = os.path.join(DATA_FOLDER, "journal.json")
 MEMORY_FILE = os.path.join(DATA_FOLDER, "learning_memory.json")
 BADGE_FILE = os.path.join(DATA_FOLDER, "badges.json")
 EVIDENCE_FILE = os.path.join(DATA_FOLDER, "evidence.json")
-SHOP_FILE = os.path.join(DATA_FOLDER, "shop.json")
 
 # ==============================
 # DỮ LIỆU MẶC ĐỊNH
@@ -183,12 +164,6 @@ DEFAULT_EVIDENCE = [
     {"title": "Chiếc Thuyền Ngoài Xa", "author": "Nguyễn Minh Châu", "content": "Cái nhìn đa chiều về cuộc sống."},
     {"title": "Rừng Xà Nu", "author": "Nguyễn Trung Thành", "content": "Tinh thần đấu tranh bất khuất."}
 ]
-DEFAULT_SHOP = [
-    {"name": "🐰 Nơ hồng", "cost": 100},
-    {"name": "🌸 Vòng hoa", "cost": 150},
-    {"name": "🥕 Cà rốt vàng", "cost": 200},
-    {"name": "👑 Vương miện", "cost": 500}
-]
 
 # ==============================
 # LOAD DỮ LIỆU
@@ -202,10 +177,9 @@ journals = load_json(JOURNAL_FILE, DEFAULT_JOURNAL)
 memory_data = load_json(MEMORY_FILE, DEFAULT_MEMORY)
 badges = load_json(BADGE_FILE, DEFAULT_BADGES)
 evidences = load_json(EVIDENCE_FILE, DEFAULT_EVIDENCE)
-shop_items = DEFAULT_SHOP  # chưa lưu lại, nhưng có thể mở rộng
 
 # ==============================
-# HÀM CẬP NHẬT XP & LEVEL
+# HÀM CẬP NHẬT XP & STREAK
 # ==============================
 def add_xp(amount):
     global xp_data
@@ -223,22 +197,17 @@ def update_streak():
         streak["days"] += 1
         streak["last"] = today
         save_json(STREAK_FILE, streak)
-        # Thưởng XP cho việc duy trì chuỗi
         if streak["days"] % 5 == 0:
             add_xp(20)
-
 update_streak()
 
-# ==============================
-# HÀM THƯỞNG XP (CÁC TÍNH NĂNG)
-# ==============================
 def reward_study(): add_xp(5)
 def reward_quiz(): add_xp(10)
 def reward_flashcard(): add_xp(8)
 def reward_daily(): add_xp(15)
 
 # ==============================
-# HÀM MỞ KHÓA HUY HIỆU
+# HUY HIỆU
 # ==============================
 def unlock_badge(name):
     if name not in badges:
@@ -246,21 +215,15 @@ def unlock_badge(name):
         save_json(BADGE_FILE, badges)
 
 def check_badges():
-    if xp_data["level"] >= 2:
-        unlock_badge("🌱 Người khởi đầu")
-    if xp_data["level"] >= 5:
-        unlock_badge("🔥 Chăm chỉ")
-    if xp_data["level"] >= 10:
-        unlock_badge("👑 Học bá")
-    if streak["days"] >= 7:
-        unlock_badge("🏅 Chăm chỉ 7 ngày")
-    if streak["days"] >= 30:
-        unlock_badge("👑 Huyền thoại")
-
+    if xp_data["level"] >= 2: unlock_badge("🌱 Người khởi đầu")
+    if xp_data["level"] >= 5: unlock_badge("🔥 Chăm chỉ")
+    if xp_data["level"] >= 10: unlock_badge("👑 Học bá")
+    if streak["days"] >= 7: unlock_badge("🏅 Chăm chỉ 7 ngày")
+    if streak["days"] >= 30: unlock_badge("👑 Huyền thoại")
 check_badges()
 
 # ==============================
-# HÀM TEXT TO SPEECH (NẾU CÓ)
+# TEXT TO SPEECH (nếu có)
 # ==============================
 def speak_text(text):
     if TTS_AVAILABLE:
@@ -273,7 +236,7 @@ def speak_text(text):
             pass
 
 # ==============================
-# HÀM XỬ LÝ TÀI LIỆU
+# HÀM TRÍCH XUẤT TÀI LIỆU
 # ==============================
 def extract_text_from_file(uploaded_file):
     if uploaded_file is None:
@@ -328,10 +291,8 @@ menu = st.sidebar.radio(
         "🌳 Cây tri thức"
     ]
 )
-
 st.sidebar.markdown("---")
-welcome_msgs = ["🐰 Hôm nay cùng cố gắng nhé", "🌸 Mỗi ngày tiến bộ 1%", "🐱 Bạn đang làm rất tốt"]
-st.sidebar.success(random.choice(welcome_msgs))
+st.sidebar.success(random.choice(["🐰 Hôm nay cùng cố gắng nhé", "🌸 Mỗi ngày tiến bộ 1%", "🐱 Bạn đang làm rất tốt"]))
 st.sidebar.info(random.choice(["🐰 Nghỉ chút rồi học tiếp nhé", "🐰 Mình tin bạn làm được"]))
 
 # ==============================
@@ -378,36 +339,33 @@ elif menu == "🎯 Nhiệm vụ":
 # ==============================
 elif menu == "📚 Học tập AI":
     st.title("📚 Học tập AI")
-    if not client:
-        st.error("AI chưa sẵn sàng. Vui lòng cài đặt GROQ_API_KEY.")
-    else:
-        uploaded = st.file_uploader("Tải tài liệu (PDF, DOCX, PPTX, TXT)", type=["pdf","docx","pptx","txt"])
-        text_content = extract_text_from_file(uploaded) if uploaded else ""
-        if uploaded and text_content:
-            st.success("Đã đọc tài liệu")
-            with st.expander("Xem nội dung trích xuất"):
-                st.text(text_content[:2000])
-            tab1, tab2, tab3, tab4 = st.tabs(["📖 Tóm tắt", "🧠 Feynman", "🎴 Flashcard", "❓ Quiz"])
-            with tab1:
-                if st.button("Tạo tóm tắt"):
-                    prompt = f"Tóm tắt tài liệu sau ngắn gọn, có gạch đầu dòng:\n{text_content[:8000]}"
-                    res = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role":"user","content":prompt}])
-                    st.write(res.choices[0].message.content)
-            with tab2:
-                if st.button("Giải thích dễ hiểu (Feynman)"):
-                    prompt = f"Giải thích tài liệu như cho học sinh lớp 5:\n{text_content[:8000]}"
-                    res = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role":"user","content":prompt}])
-                    st.write(res.choices[0].message.content)
-            with tab3:
-                if st.button("Tạo Flashcard"):
-                    prompt = f"Hãy tạo 10 flashcard (câu hỏi và đáp án) từ tài liệu:\n{text_content[:8000]}"
-                    res = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role":"user","content":prompt}])
-                    st.write(res.choices[0].message.content)
-            with tab4:
-                if st.button("Tạo Quiz trắc nghiệm"):
-                    prompt = f"Tạo 10 câu hỏi trắc nghiệm có đáp án từ tài liệu:\n{text_content[:8000]}"
-                    res = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role":"user","content":prompt}])
-                    st.write(res.choices[0].message.content)
+    uploaded = st.file_uploader("Tải tài liệu (PDF, DOCX, PPTX, TXT)", type=["pdf","docx","pptx","txt"])
+    text_content = extract_text_from_file(uploaded) if uploaded else ""
+    if uploaded and text_content:
+        st.success("Đã đọc tài liệu")
+        with st.expander("Xem nội dung trích xuất"):
+            st.text(text_content[:2000])
+        tab1, tab2, tab3, tab4 = st.tabs(["📖 Tóm tắt", "🧠 Feynman", "🎴 Flashcard", "❓ Quiz"])
+        with tab1:
+            if st.button("Tạo tóm tắt"):
+                prompt = f"Tóm tắt tài liệu sau ngắn gọn, có gạch đầu dòng:\n{text_content[:8000]}"
+                res = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role":"user","content":prompt}])
+                st.write(res.choices[0].message.content)
+        with tab2:
+            if st.button("Giải thích dễ hiểu (Feynman)"):
+                prompt = f"Giải thích tài liệu như cho học sinh lớp 5:\n{text_content[:8000]}"
+                res = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role":"user","content":prompt}])
+                st.write(res.choices[0].message.content)
+        with tab3:
+            if st.button("Tạo Flashcard"):
+                prompt = f"Hãy tạo 10 flashcard (câu hỏi và đáp án) từ tài liệu:\n{text_content[:8000]}"
+                res = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role":"user","content":prompt}])
+                st.write(res.choices[0].message.content)
+        with tab4:
+            if st.button("Tạo Quiz trắc nghiệm"):
+                prompt = f"Tạo 10 câu hỏi trắc nghiệm có đáp án từ tài liệu:\n{text_content[:8000]}"
+                res = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role":"user","content":prompt}])
+                st.write(res.choices[0].message.content)
 
 # ==============================
 # POMODORO
@@ -463,30 +421,27 @@ elif menu == "📔 Nhật ký":
 # ==============================
 elif menu == "🤖 Gia sư AI":
     st.title("🤖 Gia sư AI")
-    if not client:
-        st.error("AI chưa sẵn sàng.")
-    else:
-        if "tutor_chat" not in st.session_state:
-            st.session_state.tutor_chat = []
-        for msg in st.session_state.tutor_chat:
-            with st.chat_message(msg["role"]):
-                st.write(msg["content"])
-        prompt = st.chat_input("Nhập câu hỏi...")
-        if prompt:
-            st.session_state.tutor_chat.append({"role": "user", "content": prompt})
-            with st.chat_message("user"):
-                st.write(prompt)
-            with st.spinner("AI đang suy nghĩ..."):
-                res = client.chat.completions.create(
-                    model="llama-3.1-70b-versatile",
-                    messages=[{"role": "user", "content": prompt}]
-                )
-                answer = res.choices[0].message.content
-            st.session_state.tutor_chat.append({"role": "assistant", "content": answer})
-            with st.chat_message("assistant"):
-                st.write(answer)
-                if st.button("🔊 Đọc", key="tts"):
-                    speak_text(answer)
+    if "tutor_chat" not in st.session_state:
+        st.session_state.tutor_chat = []
+    for msg in st.session_state.tutor_chat:
+        with st.chat_message(msg["role"]):
+            st.write(msg["content"])
+    prompt = st.chat_input("Nhập câu hỏi...")
+    if prompt:
+        st.session_state.tutor_chat.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.write(prompt)
+        with st.spinner("AI đang suy nghĩ..."):
+            res = client.chat.completions.create(
+                model="llama-3.1-70b-versatile",
+                messages=[{"role": "user", "content": prompt}]
+            )
+            answer = res.choices[0].message.content
+        st.session_state.tutor_chat.append({"role": "assistant", "content": answer})
+        with st.chat_message("assistant"):
+            st.write(answer)
+            if st.button("🔊 Đọc", key="tts"):
+                speak_text(answer)
 
 # ==============================
 # DẪN CHỨNG VĂN HỌC
@@ -524,7 +479,6 @@ elif menu == "🐰 Thú cưng":
     st.title("🐰 Thỏ học tập")
     st.markdown("# 🐰")
     st.write(f"Level thỏ: {pet['level']}")
-    # Tăng level thỏ dựa trên level người dùng
     if xp_data["level"] >= pet["level"] * 2:
         pet["level"] += 1
         save_json(PET_FILE, pet)
@@ -535,6 +489,12 @@ elif menu == "🐰 Thú cưng":
 # ==============================
 elif menu == "🛍️ Cửa hàng":
     st.title("🛍️ Cửa hàng thỏ")
+    shop_items = [
+        {"name": "🐰 Nơ hồng", "cost": 100},
+        {"name": "🌸 Vòng hoa", "cost": 150},
+        {"name": "🥕 Cà rốt vàng", "cost": 200},
+        {"name": "👑 Vương miện", "cost": 500}
+    ]
     for item in shop_items:
         col1, col2 = st.columns([4,1])
         col1.write(item["name"])
@@ -542,13 +502,13 @@ elif menu == "🛍️ Cửa hàng":
         if col2.button("Mua", key=item["name"]):
             if xp_data["xp"] >= item["cost"]:
                 add_xp(-item["cost"])
-                st.success(f"Đã mua {item['name']}! (Trừ {item['cost']} XP)")
+                st.success(f"Đã mua {item['name']}!")
                 st.rerun()
             else:
                 st.warning("Không đủ XP")
 
 # ==============================
-# THỐNG KÊ NÂNG CAO
+# THỐNG KÊ
 # ==============================
 elif menu == "📈 Thống kê":
     st.title("📈 Thống kê học tập")
@@ -557,10 +517,11 @@ elif menu == "📈 Thống kê":
     col2.metric("XP", xp_data["xp"])
     col3.metric("Chuỗi học", streak["days"])
     col4.metric("Flashcard", len(flashcards))
-    st.bar_chart(pd.DataFrame({
+    df_stats = pd.DataFrame({
         "Chỉ số": ["XP", "Level", "Streak"],
         "Giá trị": [xp_data["xp"], xp_data["level"], streak["days"]]
-    }).set_index("Chỉ số"))
+    })
+    st.bar_chart(df_stats.set_index("Chỉ số"))
 
 # ==============================
 # HÀNH TRÌNH
@@ -578,12 +539,12 @@ elif menu == "👑 Hành trình":
         st.success("👑 Học bá huyền thoại")
 
 # ==============================
-# LỊCH HỌC (ĐƠN GIẢN)
+# LỊCH HỌC
 # ==============================
 elif menu == "📅 Lịch học":
     st.title("📅 Kế hoạch tuần")
-    days = ["Thứ 2", "Thứ 3", "Thứ 4", "Thứ 5", "Thứ 6", "Thứ 7", "Chủ Nhật"]
-    for d in days:
+    days_list = ["Thứ 2", "Thứ 3", "Thứ 4", "Thứ 5", "Thứ 6", "Thứ 7", "Chủ Nhật"]
+    for d in days_list:
         st.text_input(d, key=d)
 
 # ==============================
@@ -591,30 +552,27 @@ elif menu == "📅 Lịch học":
 # ==============================
 elif menu == "🛣️ Lộ trình AI":
     st.title("🛣️ AI Lộ trình")
-    if not client:
-        st.error("AI chưa sẵn sàng.")
-    else:
-        goal = st.text_input("Mục tiêu học tập của bạn")
-        if st.button("Tạo lộ trình") and goal:
-            prompt = f"Hãy tạo lộ trình học tập chi tiết theo tuần cho mục tiêu: {goal}"
-            res = client.chat.completions.create(model="llama-3.1-70b-versatile", messages=[{"role":"user","content":prompt}])
-            st.write(res.choices[0].message.content)
+    goal = st.text_input("Mục tiêu học tập của bạn")
+    if st.button("Tạo lộ trình") and goal:
+        prompt = f"Hãy tạo lộ trình học tập chi tiết theo tuần cho mục tiêu: {goal}"
+        res = client.chat.completions.create(model="llama-3.1-70b-versatile", messages=[{"role":"user","content":prompt}])
+        st.write(res.choices[0].message.content)
 
 # ==============================
 # CÂY TRI THỨC
 # ==============================
 elif menu == "🌳 Cây tri thức":
     st.title("🌳 Cây tri thức")
-    level = xp_data["level"]
-    if level < 3:
+    lvl = xp_data["level"]
+    if lvl < 3:
         st.markdown("# 🌱")
-    elif level < 8:
+    elif lvl < 8:
         st.markdown("# 🌿")
-    elif level < 15:
+    elif lvl < 15:
         st.markdown("# 🌳")
     else:
         st.markdown("# 🌲")
-    st.write(f"Cấp độ cây: {level}")
+    st.write(f"Cấp độ cây: {lvl}")
 
 # ==============================
 # KẾT THÚC
