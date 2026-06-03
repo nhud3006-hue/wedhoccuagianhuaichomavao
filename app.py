@@ -827,18 +827,17 @@ elif menu == "♟️ Cờ vua AI":
     # Khởi tạo bàn cờ trong session state
     if "chess_board" not in st.session_state:
         st.session_state.chess_board = chess.Board()
-        st.session_state.chess_move_history = []  # lưu các nước đi dạng UCI
+        st.session_state.chess_move_history = []
         st.session_state.chess_game_over = False
-        st.session_state.chess_last_move = None
     
     board = st.session_state.chess_board
     move_history = st.session_state.chess_move_history
     
-    # Hiển thị bàn cờ dạng SVG
+    # Hiển thị bàn cờ SVG
     board_svg = chess.svg.board(board=board, size=400)
     st.components.v1.html(board_svg, height=450, width=450)
     
-    # Hiển thị trạng thái
+    # Kiểm tra kết thúc
     if board.is_checkmate():
         winner = "Trắng" if board.turn == chess.BLACK else "Đen"
         st.error(f"🏆 Chiếu hết! {winner} thắng.")
@@ -850,47 +849,44 @@ elif menu == "♟️ Cờ vua AI":
         st.warning("⚠️ Vua đang bị chiếu!")
     
     if not st.session_state.chess_game_over:
-        # Người chơi là quân trắng (đi trước)
+        # Lượt người chơi (quân trắng)
         if board.turn == chess.WHITE:
             st.subheader("🏃 Nước đi của bạn")
-                        # Nút gợi ý nước đi từ AI
-            if st.button("💡 Gợi ý nước đi cho tôi"):
-                with st.spinner("AI đang phân tích..."):
-                    legal_san = [board.san(m) for m in board.legal_moves]
-                    hint_prompt = f"Thế cờ hiện tại (FEN: {board.fen()}). Hãy đề xuất một nước đi tốt nhất cho quân Trắng trong các nước sau: {', '.join(legal_san)}. Chỉ trả lời duy nhất tên nước đi (dạng SAN, ví dụ: e4, Nf3)."
-                    hint_res = client.chat.completions.create(
-                        model="llama-3.1-8b-instant",
-                        messages=[{"role": "user", "content": hint_prompt}],
-                        temperature=0.3
-                    )
-                    st.info(f"💡 AI gợi ý: {hint_res.choices[0].message.content.strip()}")
-            # Nhập nước đi bằng UCI (ví dụ: e2e4)
-            move_uci = st.text_input("Nhập nước đi (UCI, ví dụ: e2e4, g1f3):", key="uci_input")
-            if st.button("Thực hiện nước đi"):
-                try:
-                    move = chess.Move.from_uci(move_uci)
-                    if move in board.legal_moves:
-                        board.push(move)
-                        move_history.append(move_uci)
-                        st.session_state.chess_board = board
-                        st.rerun()
+            # Lấy danh sách các ô có quân trắng có thể đi
+            legal_moves = list(board.legal_moves)
+            if legal_moves:
+                # Tạo dictionary mapping từ ô nguồn -> các ô đích hợp lệ
+                from_squares = sorted(set(move.from_square for move in legal_moves))
+                from_square_names = [chess.SQUARE_NAMES[sq] for sq in from_squares]
+                selected_from = st.selectbox("Chọn quân ở ô:", from_square_names)
+                from_sq = chess.parse_square(selected_from)
+                # Lọc các nước đi từ ô đó
+                to_squares = [move.to_square for move in legal_moves if move.from_square == from_sq]
+                to_square_names = [chess.SQUARE_NAMES[sq] for sq in to_squares]
+                if to_square_names:
+                    selected_to = st.selectbox("Di chuyển đến ô:", to_square_names)
+                    to_sq = chess.parse_square(selected_to)
+                    # Tìm nước đi chính xác
+                    move = chess.Move(from_sq, to_sq)
+                    # Kiểm tra nước đi có hợp lệ không
+                    if move in legal_moves:
+                        if st.button("Thực hiện nước đi"):
+                            board.push(move)
+                            move_history.append(board.uci(move))
+                            st.session_state.chess_board = board
+                            st.rerun()
                     else:
-                        st.error("Nước đi không hợp lệ!")
-                except:
-                    st.error("Định dạng UCI sai. Hãy nhập đúng.")
+                        st.error("Nước đi không hợp lệ (có thể cần phong cấp? Vui lòng thử lại).")
+                else:
+                    st.info("Quân này không thể di chuyển hợp lệ. Chọn ô khác.")
+            else:
+                st.info("Không có nước đi hợp lệ nào. Bạn có thể đã bị chiếu hết?")
         else:
             # Lượt AI (quân đen)
             st.subheader("🤖 AI đang suy nghĩ...")
             with st.spinner("AI tính toán nước đi tối ưu..."):
-                # Hỏi Groq chọn nước đi hay nhất
-                # Lấy danh sách nước đi hợp lệ dạng text
-                legal_moves = [board.san(move) for move in board.legal_moves]  # SAN dễ đọc
-                board_fen = board.fen()
-                prompt = f"""
-Bạn là một đại kiện tướng cờ vua. Hãy phân tích thế cờ sau (FEN: {board_fen}) và chọn MỘT nước đi tốt nhất cho quân Đen. 
-Các nước đi hợp lệ (dạng SAN): {', '.join(legal_moves)}.
-Chỉ trả lời duy nhất một nước đi dưới dạng SAN (ví dụ: Nf6, e5, O-O). Không giải thích gì thêm.
-"""
+                legal_moves_san = [board.san(m) for m in board.legal_moves]
+                prompt = f"Bạn là đại kiện tướng cờ vua. Thế cờ: {board.fen()}. Hãy chọn một nước đi tốt nhất cho quân Đen từ các nước sau: {', '.join(legal_moves_san)}. Trả lời DUY NHẤT tên nước đi dạng SAN (ví dụ: Nf6, e5)."
                 try:
                     res = client.chat.completions.create(
                         model="llama-3.1-8b-instant",
@@ -898,37 +894,49 @@ Chỉ trả lời duy nhất một nước đi dưới dạng SAN (ví dụ: Nf6
                         temperature=0.3
                     )
                     ai_move_san = res.choices[0].message.content.strip()
-                    # Chuyển SAN -> Move
-                    try:
-                        ai_move = board.parse_san(ai_move_san)
-                        if ai_move in board.legal_moves:
-                            board.push(ai_move)
-                            move_history.append(board.uci(ai_move))
-                            st.session_state.chess_board = board
-                            st.success(f"🤖 AI đi: {ai_move_san}")
-                            st.rerun()
-                        else:
-                            # Nếu AI trả lời sai, chọn nước đầu tiên
-                            st.warning(f"AI đề xuất {ai_move_san} không hợp lệ, chọn nước ngẫu nhiên.")
-                            first_move = list(board.legal_moves)[0]
-                            board.push(first_move)
-                            move_history.append(board.uci(first_move))
-                            st.session_state.chess_board = board
-                            st.rerun()
-                    except:
-                        # Lỗi parse, chọn nước đầu
+                    ai_move = board.parse_san(ai_move_san)
+                    if ai_move in board.legal_moves:
+                        board.push(ai_move)
+                        move_history.append(board.uci(ai_move))
+                        st.session_state.chess_board = board
+                        st.success(f"🤖 AI đi: {ai_move_san}")
+                        st.rerun()
+                    else:
+                        # fallback
                         first_move = list(board.legal_moves)[0]
                         board.push(first_move)
                         move_history.append(board.uci(first_move))
                         st.session_state.chess_board = board
+                        st.warning(f"AI đề xuất không hợp lệ, chọn nước đầu: {board.san(first_move)}")
                         st.rerun()
-                except Exception as e:
-                    st.error(f"Lỗi AI: {e}. AI sẽ đi nước đầu tiên.")
+                except:
                     first_move = list(board.legal_moves)[0]
                     board.push(first_move)
                     move_history.append(board.uci(first_move))
                     st.session_state.chess_board = board
                     st.rerun()
+    
+    # Nút phân tích ván đấu
+    if st.button("📊 Phân tích ván đấu (AI nhận xét)"):
+        if len(move_history) > 0:
+            with st.spinner("AI đang phân tích..."):
+                analysis_prompt = f"Phân tích ván cờ sau (các nước đi UCI: {' '.join(move_history)}). Đánh giá điểm mạnh/yếu của người chơi (quân trắng), góp ý cải thiện. Trả lời bằng tiếng Việt."
+                res = client.chat.completions.create(
+                    model="llama-3.1-70b-versatile",
+                    messages=[{"role": "user", "content": analysis_prompt}]
+                )
+                st.markdown("### 🧠 Nhận xét từ AI")
+                st.write(res.choices[0].message.content)
+                add_xp(20)
+                st.success("+20 XP!")
+        else:
+            st.info("Chưa có nước đi nào.")
+    
+    if st.button("🔄 Ván mới"):
+        st.session_state.chess_board = chess.Board()
+        st.session_state.chess_move_history = []
+        st.session_state.chess_game_over = False
+        st.rerun()
     
     # Nút phân tích ván đấu (hiển thị sau khi kết thúc)
     if st.session_state.chess_game_over or st.button("📊 Phân tích ván đấu (sau khi kết thúc)"):
