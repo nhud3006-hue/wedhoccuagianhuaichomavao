@@ -2,4 +2,5 @@ streamlit
 groq
 pandas
 edge-tts
-
+chess
+stockfish
