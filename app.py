@@ -659,7 +659,233 @@ elif menu == "📹 Video AI":
                 )
                 st.success(response.choices[0].message.content)
                 st.warning("Lưu ý: AI chưa thực sự nhìn thấy ảnh (chỉ mô phỏng). Để nhận diện ảnh thật, cần dùng mô hình vision như GPT-4V.")
+# ==============================
+# CHESS AI MODULE - PHÂN TÍCH CHUYÊN SÂU
+# ==============================
 
+# === CÀI ĐẶT THƯ VIỆN ===
+# pip install stockfish python-chess
+# Tải Stockfish engine từ https://stockfishchess.org/download/ và giải nén, nhớ đường dẫn.
+
+import chess
+import chess.pgn
+import io
+from stockfish import Stockfish
+
+# === CẤU HÌNH STOCKFISH ===
+# ⚠️ EM PHẢI SỬA ĐƯỜNG DẪN NÀY ĐÚNG VỚI MÁY CỦA EM
+STOCKFISH_PATH = r"C:\stockfish\stockfish-windows-x86-64-avx2.exe"  # Ví dụ, thay bằng đường dẫn thật
+
+# Kiểm tra file tồn tại
+if not os.path.exists(STOCKFISH_PATH):
+    st.sidebar.warning("⚠️ Chưa tìm thấy Stockfish engine. Vui lòng tải về và cập nhật đường dẫn trong code.")
+    STOCKFISH_READY = False
+else:
+    try:
+        engine = Stockfish(STOCKFISH_PATH, parameters={"Skill Level": 15})  # Cấp độ 0-20, 15 là khá
+        engine.set_depth(15)
+        STOCKFISH_READY = True
+    except Exception as e:
+        st.sidebar.error(f"Lỗi khởi tạo Stockfish: {e}")
+        STOCKFISH_READY = False
+
+# === CÁC HÀM PHÂN TÍCH ===
+def classify_move(score_diff):
+    """Phân loại nước đi dựa trên chênh lệch điểm số (centipawn)"""
+    if score_diff > 300:
+        return "💥 Blunder (Sai lầm nghiêm trọng)"
+    elif score_diff > 150:
+        return "⚠️ Mistake (Sai lầm)"
+    elif score_diff > 50:
+        return "🔍 Inaccuracy (Thiếu chính xác)"
+    elif score_diff > 10:
+        return "👍 Good Move (Nước đi tốt)"
+    elif score_diff > 0:
+        return "🌟 Excellent Move (Nước đi xuất sắc)"
+    else:
+        return "🏆 Best Move (Nước đi tốt nhất)"
+
+def get_best_move_and_score(fen):
+    """Trả về nước đi tốt nhất và điểm số (từ góc nhìn người đi)"""
+    engine.set_fen_position(fen)
+    best_move = engine.get_best_move()
+    eval = engine.get_evaluation()
+    if eval["type"] == "cp":
+        score = eval["value"] / 100.0
+    else:  # mate
+        score = 999 if eval["value"] > 0 else -999
+    return best_move, score
+
+def analyze_move(fen_before, move_san, player_color):
+    """Phân tích một nước đi của người chơi (màu player_color)"""
+    board = chess.Board(fen_before)
+    move = board.parse_san(move_san)
+    board.push(move)
+    fen_after = board.fen()
+    # Lấy điểm số trước khi đi (nước tốt nhất)
+    _, best_score_before = get_best_move_and_score(fen_before)
+    # Lấy điểm số sau khi đi
+    _, score_after = get_best_move_and_score(fen_after)
+    # Tính chênh lệch theo màu của người đi
+    if player_color == "white":
+        diff = score_after - best_score_before
+    else:
+        diff = -score_after + best_score_before
+    quality = classify_move(abs(diff))
+    return {
+        "move": move_san,
+        "fen_before": fen_before,
+        "quality": quality,
+        "score_diff": round(diff, 1)
+    }
+
+# === TAB CỜ VUA (THÊM VÀO MENU) ===
+# Thêm mục "♟️ Cờ vua AI" vào danh sách menu sidebar
+# Em hãy tìm dòng `menu = st.sidebar.radio(...)` và thêm "♟️ Cờ vua AI" vào list.
+
+# Tôi sẽ tạo một biến để kiểm tra nếu menu được chọn, nhưng vì menu đã được định nghĩa từ đầu,
+# em cần sửa thủ công. Tôi sẽ viết code cho phần cờ vua, em sẽ nhúng vào chỗ phù hợp.
+
+# Tạm thời, tôi đặt ở cuối file, nhưng để hoạt động, em cần đưa đoạn sau vào trong cấu trúc if-elif của menu.
+# Cách tốt: thêm một mục mới vào danh sách menu và xử lý nó.
+# Vì không thể sửa trực tiếp phần menu trên, tôi sẽ hướng dẫn em tự thêm.
+
+# Em hãy tìm dòng:
+# menu = st.sidebar.radio("Menu", [ ... ])
+# Thêm "♟️ Cờ vua AI" vào cuối list đó.
+# Sau đó, thêm khối elif dưới đây trước dòng `# ============================== KẾT THÚC ==============================`.
+
+# === NỘI DUNG TAB CỜ VUA ===
+if menu == "♟️ Cờ vua AI":
+    st.title("♟️ Cờ vua AI - Phân tích nước đi chuyên sâu")
+    if not STOCKFISH_READY:
+        st.error("Stockfish chưa sẵn sàng. Vui lòng kiểm tra đường dẫn và cài đặt.")
+        st.stop()
+    
+    # Khởi tạo session state
+    if "chess_board" not in st.session_state:
+        st.session_state.chess_board = chess.Board()
+        st.session_state.move_history = []  # list các dict nước đi của người
+        st.session_state.game_over = False
+        st.session_state.game_result = None
+    
+    board = st.session_state.chess_board
+    move_history = st.session_state.move_history
+    game_over = st.session_state.game_over
+    game_result = st.session_state.game_result
+    
+    # Hiển thị bàn cờ (dùng thư viện chess.svg, nhưng streamlit không hỗ trợ trực tiếp, dùng text)
+    # Để đơn giản, hiển thị FEN và bàn cờ text
+    col_board, col_info = st.columns([2, 1])
+    with col_board:
+        st.text(board)
+        st.caption("Ký hiệu: P= tốt, N= mã, B= tượng, R= xe, Q= hậu, K= vua. Chữ hoa là trắng, thường là đen.")
+        fen = board.fen()
+        st.text_input("FEN (trạng thái bàn cờ)", fen, key="fen_display")
+    
+    with col_info:
+        st.subheader("Thông tin")
+        if board.turn == chess.WHITE:
+            st.info("Lượt: **Trắng** (Bạn)")
+        else:
+            st.info("Lượt: **Đen** (AI Stockfish)")
+        st.write(f"**Lịch sử nước đi của bạn:** {len(move_history)} nước")
+        if game_over:
+            if game_result == "win":
+                st.success("🎉 Bạn thắng! Chúc mừng!")
+            elif game_result == "lose":
+                st.error("😞 Bạn thua! Hãy phân tích để cải thiện.")
+            else:
+                st.warning("🤝 Hòa cờ.")
+    
+    # Nhập nước đi của người (nếu game chưa kết thúc và lượt là trắng - người chơi)
+    if not game_over and board.turn == chess.WHITE:
+        move_san = st.text_input("Nhập nước đi của bạn (theo ký hiệu đại số, ví dụ: e4, Nf3, O-O...)", key="move_input")
+        if st.button("🏁 Đi nước này"):
+            try:
+                move = board.parse_san(move_san)
+                if move in board.legal_moves:
+                    # Lưu lại trạng thái trước khi đi để phân tích
+                    fen_before = board.fen()
+                    board.push(move)
+                    # Phân tích nước đi vừa thực hiện (người chơi)
+                    analysis = analyze_move(fen_before, move_san, "white")
+                    move_history.append(analysis)
+                    st.success(f"Đã đi: {move_san}")
+                    # Kiểm tra kết thúc ván
+                    if board.is_game_over():
+                        st.session_state.game_over = True
+                        if board.result() == "1-0":
+                            st.session_state.game_result = "win"
+                        elif board.result() == "0-1":
+                            st.session_state.game_result = "lose"
+                        else:
+                            st.session_state.game_result = "draw"
+                    st.rerun()
+                else:
+                    st.error("Nước đi không hợp lệ!")
+            except Exception as e:
+                st.error(f"Nước đi không đúng định dạng: {e}")
+    
+    # AI đi (nếu game chưa kết thúc và lượt là đen)
+    if not game_over and board.turn == chess.BLACK:
+        with st.spinner("AI Stockfish đang suy nghĩ..."):
+            engine.set_fen_position(board.fen())
+            best_move = engine.get_best_move()
+            if best_move:
+                # Lưu fen trước khi AI đi
+                fen_before = board.fen()
+                move = board.parse_uci(best_move)
+                san = board.san(move)
+                board.push(move)
+                # Ghi nhận nước đi của AI (không cần phân tích, nhưng có thể lưu để tham khảo)
+                # Ở đây chỉ lưu nước đi của người, AI không lưu vào move_history
+                st.info(f"🤖 AI đi: {san}")
+                # Kiểm tra kết thúc
+                if board.is_game_over():
+                    st.session_state.game_over = True
+                    if board.result() == "1-0":
+                        st.session_state.game_result = "win"
+                    elif board.result() == "0-1":
+                        st.session_state.game_result = "lose"
+                    else:
+                        st.session_state.game_result = "draw"
+                st.rerun()
+            else:
+                st.error("AI không tìm được nước đi")
+    
+    # Nút phân tích toàn bộ ván cờ (sau khi kết thúc hoặc bất kỳ lúc nào)
+    st.markdown("---")
+    if st.button("🔍 Phân tích toàn bộ các nước đi của bạn"):
+        if move_history:
+            st.subheader("📊 Phân tích từng nước đi")
+            df = pd.DataFrame(move_history)
+            for idx, row in df.iterrows():
+                st.write(f"**Nước {idx+1}:** {row['move']}")
+                st.write(f"Đánh giá: {row['quality']} (chênh lệch {row['score_diff']} centipawn)")
+                # Giải thích thêm bằng AI Groq nếu muốn (có thể thêm sau)
+            # Tổng kết
+            st.subheader("📈 Tổng kết điểm mạnh/yếu")
+            blunders = [m for m in move_history if "Blunder" in m["quality"]]
+            mistakes = [m for m in move_history if "Mistake" in m["quality"]]
+            inaccuracies = [m for m in move_history if "Inaccuracy" in m["quality"]]
+            st.write(f"💥 Số lần Blunder: {len(blunders)}")
+            st.write(f"⚠️ Số lần Mistake: {len(mistakes)}")
+            st.write(f"🔍 Số lần Inaccuracy: {len(inaccuracies)}")
+            if blunders:
+                st.warning("Hãy xem lại các nước Blunder, đó là những sai lầm nghiêm trọng.")
+            else:
+                st.success("Không có Blunder nào! Tốt lắm.")
+        else:
+            st.info("Chưa có nước đi nào để phân tích.")
+    
+    # Nút bắt đầu ván mới
+    if st.button("🔄 Ván cờ mới"):
+        st.session_state.chess_board = chess.Board()
+        st.session_state.move_history = []
+        st.session_state.game_over = False
+        st.session_state.game_result = None
+        st.rerun()
 # ==============================
 # KẾT THÚC
 # ==============================
