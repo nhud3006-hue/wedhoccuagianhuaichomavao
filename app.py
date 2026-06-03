@@ -1,6 +1,6 @@
 # ==============================
-# STUDY GARDEN AI - HOÀN CHỈNH (PHẦN 1)
-# Tích hợp: AI Groq, Ghi âm, TTS, Camera, Cờ vua, Spaced Repetition
+# STUDY GARDEN AI - HOÀN CHỈNH
+# Tích hợp: Groq AI, Spaced Repetition, Cờ vua, Ghi âm, TTS, Camera
 # Mật khẩu mặc định: 123456
 # ==============================
 
@@ -13,25 +13,25 @@ from datetime import datetime, timedelta
 import pandas as pd
 import time
 import asyncio
-import math
+import uuid
 
 # === THƯ VIỆN AI ===
 from groq import Groq
 
-# === THƯ VIỆN TTS (nếu có) ===
+# === THƯ VIỆN TTS ===
 try:
     import edge_tts
     EDGE_TTS_AVAILABLE = True
 except ImportError:
     EDGE_TTS_AVAILABLE = False
 
-# === CÁC THƯ VIỆN KHÁC ===
 try:
     import pyttsx3
     TTS_AVAILABLE = True
 except ImportError:
     TTS_AVAILABLE = False
 
+# === THƯ VIỆN XỬ LÝ FILE ===
 try:
     from PyPDF2 import PdfReader
     PDF_AVAILABLE = True
@@ -53,16 +53,10 @@ except ImportError:
 # === THƯ VIỆN CỜ VUA ===
 try:
     import chess
-    import chess.pgn
+    import chess.svg
     CHESS_AVAILABLE = True
 except ImportError:
     CHESS_AVAILABLE = False
-
-try:
-    from stockfish import Stockfish
-    STOCKFISH_IMPORT = True
-except ImportError:
-    STOCKFISH_IMPORT = False
 
 # ==============================
 # CẤU HÌNH TRANG
@@ -95,15 +89,6 @@ st.markdown("""
 }
 .stButton button:hover {
     background: #5aa9ff;
-}
-.notification-badge {
-    background-color: #ff6b6b;
-    color: white;
-    border-radius: 20px;
-    padding: 4px 12px;
-    font-size: 14px;
-    display: inline-block;
-    margin-left: 10px;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -161,13 +146,13 @@ if not st.session_state.logged_in:
     st.stop()
 
 # ==============================
-# KHỞI TẠO GROQ CLIENT (API key của em)
+# KHỞI TẠO GROQ CLIENT (dùng st.secrets khuyến khích, nhưng giữ API key cũ để chạy)
 # ==============================
-GROQ_API_KEY = "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"
+GROQ_API_KEY = "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"  # Thay bằng key của bạn hoặc dùng st.secrets
 client = Groq(api_key=GROQ_API_KEY)
 
 # ==============================
-# CÁC FILE DỮ LIỆU HIỆN CÓ
+# CÁC FILE DỮ LIỆU
 # ==============================
 TASK_FILE = os.path.join(DATA_FOLDER, "tasks.json")
 XP_FILE = os.path.join(DATA_FOLDER, "xp.json")
@@ -178,6 +163,7 @@ JOURNAL_FILE = os.path.join(DATA_FOLDER, "journal.json")
 MEMORY_FILE = os.path.join(DATA_FOLDER, "learning_memory.json")
 BADGE_FILE = os.path.join(DATA_FOLDER, "badges.json")
 EVIDENCE_FILE = os.path.join(DATA_FOLDER, "evidence.json")
+SRS_FILE = os.path.join(DATA_FOLDER, "srs_data.json")
 
 # ==============================
 # DỮ LIỆU MẶC ĐỊNH
@@ -196,6 +182,7 @@ DEFAULT_EVIDENCE = [
     {"title": "Chiếc Thuyền Ngoài Xa", "author": "Nguyễn Minh Châu", "content": "Cái nhìn đa chiều về cuộc sống."},
     {"title": "Rừng Xà Nu", "author": "Nguyễn Trung Thành", "content": "Tinh thần đấu tranh bất khuất."}
 ]
+DEFAULT_SRS = []
 
 # ==============================
 # LOAD DỮ LIỆU
@@ -209,6 +196,7 @@ journals = load_json(JOURNAL_FILE, DEFAULT_JOURNAL)
 memory_data = load_json(MEMORY_FILE, DEFAULT_MEMORY)
 badges = load_json(BADGE_FILE, DEFAULT_BADGES)
 evidences = load_json(EVIDENCE_FILE, DEFAULT_EVIDENCE)
+srs_data = load_json(SRS_FILE, DEFAULT_SRS)
 
 # ==============================
 # HÀM CẬP NHẬT XP & STREAK
@@ -252,10 +240,13 @@ def check_badges():
     if xp_data["level"] >= 10: unlock_badge("👑 Học bá")
     if streak["days"] >= 7: unlock_badge("🏅 Chăm chỉ 7 ngày")
     if streak["days"] >= 30: unlock_badge("👑 Huyền thoại")
+    # Badge cho SRS
+    if len(srs_data) >= 10:
+        unlock_badge("📚 Vua lặp lại")
 check_badges()
 
 # ==============================
-# TEXT TO SPEECH & EDGE TTS (giữ nguyên)
+# TEXT TO SPEECH (pyttsx3 - cũ)
 # ==============================
 def speak_text(text):
     if TTS_AVAILABLE:
@@ -267,6 +258,9 @@ def speak_text(text):
         except:
             pass
 
+# ==============================
+# TTS VOICE EDGE (async)
+# ==============================
 async def edge_tts_speak(text, filename="reply.mp3"):
     if EDGE_TTS_AVAILABLE:
         communicate = edge_tts.Communicate(text, voice="vi-VN-NamMinhNeural")
@@ -283,7 +277,7 @@ def run_async_tts(text):
         return None
 
 # ==============================
-# HÀM TRÍCH XUẤT TÀI LIỆU (giữ nguyên)
+# HÀM TRÍCH XUẤT TÀI LIỆU
 # ==============================
 def extract_text_from_file(uploaded_file):
     if uploaded_file is None:
@@ -314,386 +308,660 @@ def extract_text_from_file(uploaded_file):
     return text
 
 # ==============================
-# MODULE SPACED REPETITION (LẶP LẠI NGẮT QUÃNG)
+# HÀM SPACED REPETITION
 # ==============================
-# File lưu trữ các thẻ ôn tập
-SPACED_FILE = os.path.join(DATA_FOLDER, "spaced_repetition.json")
+# Chu kỳ spaced repetition (đơn vị: ngày)
+SRS_INTERVALS = [
+    5 / (24 * 60),   # 5 phút
+    30 / (24 * 60),  # 30 phút
+    2 / 24,          # 2 giờ
+    8 / 24,          # 8 giờ
+    1,               # 1 ngày
+    2,               # 2 ngày
+    5,               # 5 ngày
+    10,              # 10 ngày
+    20,              # 20 ngày
+    40               # 40 ngày
+]
 
-# Các mốc thời gian theo khoa học (phút, giờ, ngày)
-# Dựa trên thuật toán SM-2, sau mỗi lần học đúng, khoảng cách tăng dần.
-# Ở đây đơn giản hóa: lần 1: 5 phút, lần 2: 30 phút, lần 3: 12 giờ, lần 4: 1 ngày, lần 5: 2 ngày, lần 6: 4 ngày, lần 7: 7 ngày, lần 8: 14 ngày
-INTERVALS = [5, 30, 12*60, 24*60, 48*60, 96*60, 168*60, 336*60]  # đơn vị phút
+def get_next_review_date(stage, base_time=None):
+    if base_time is None:
+        base_time = datetime.now()
+    if stage >= len(SRS_INTERVALS):
+        stage = len(SRS_INTERVALS) - 1
+    days = SRS_INTERVALS[stage]
+    return base_time + timedelta(days=days)
 
-def init_spaced_data():
-    if not os.path.exists(SPACED_FILE):
-        save_json(SPACED_FILE, [])
-
-def add_spaced_card(content, tags=""):
-    """Thêm một thẻ học mới vào hệ thống lặp lại ngắt quãng"""
-    init_spaced_data()
-    data = load_json(SPACED_FILE, [])
-    now = datetime.now()
-    card = {
-        "id": len(data) + 1,
+def add_srs_card(content):
+    global srs_data
+    new_card = {
+        "id": str(uuid.uuid4()),
         "content": content,
-        "tags": tags,
-        "created_at": now.isoformat(),
-        "last_review": None,
-        "next_review": now.isoformat(),  # có thể học ngay
-        "interval_index": 0,  # lần học tiếp theo sẽ dùng INTERVALS[0]
-        "easiness": 2.5,      # độ dễ (theo SM-2)
-        "repetitions": 0
+        "stage": 0,
+        "next_review": get_next_review_date(0).isoformat()
     }
-    data.append(card)
-    save_json(SPACED_FILE, data)
-    return card
+    srs_data.append(new_card)
+    save_json(SRS_FILE, srs_data)
+    return new_card
 
-def get_due_cards():
-    """Trả về danh sách các thẻ cần ôn tập ngay bây giờ"""
-    init_spaced_data()
-    data = load_json(SPACED_FILE, [])
+def review_srs_card(card_id, remembered):
+    global srs_data
+    for card in srs_data:
+        if card["id"] == card_id:
+            if remembered:
+                card["stage"] += 1
+                if card["stage"] >= len(SRS_INTERVALS):
+                    card["stage"] = len(SRS_INTERVALS) - 1
+            else:
+                card["stage"] = 0
+            card["next_review"] = get_next_review_date(card["stage"]).isoformat()
+            break
+    save_json(SRS_FILE, srs_data)
+
+def get_due_srs_cards():
     now = datetime.now()
     due = []
-    for card in data:
-        if card["next_review"]:
-            next_time = datetime.fromisoformat(card["next_review"])
-            if now >= next_time:
+    for card in srs_data:
+        try:
+            next_dt = datetime.fromisoformat(card["next_review"])
+            if next_dt <= now:
                 due.append(card)
+        except:
+            pass
     return due
 
-def update_card_review(card_id, success):
-    """Cập nhật sau khi học: success = True nếu nhớ, False nếu quên"""
-    data = load_json(SPACED_FILE, [])
-    card = next((c for c in data if c["id"] == card_id), None)
-    if not card:
-        return
-    now = datetime.now()
-    if success:
-        # Tăng số lần lặp lại
-        card["repetitions"] += 1
-        # Cập nhật độ dễ (theo công thức SM-2 đơn giản)
-        # Ở đây chỉ tăng interval index nếu repetitions chưa vượt quá số mốc
-        if card["repetitions"] <= len(INTERVALS):
-            interval_minutes = INTERVALS[card["repetitions"] - 1]
-        else:
-            interval_minutes = INTERVALS[-1] * 2  # tiếp tục nhân đôi
-        card["next_review"] = (now + timedelta(minutes=interval_minutes)).isoformat()
-        card["last_review"] = now.isoformat()
-    else:
-        # Nếu quên, reset repetitions về 0 và lịch trình về mốc đầu tiên (5 phút)
-        card["repetitions"] = 0
-        card["next_review"] = (now + timedelta(minutes=INTERVALS[0])).isoformat()
-        card["last_review"] = now.isoformat()
-    save_json(SPACED_FILE, data)
+# ==============================
+# SIDEBAR MENU
+# ==============================
+st.sidebar.title("🌸 Study Garden")
+menu = st.sidebar.radio(
+    "Menu",
+    [
+        "🏠 Trang chủ",
+        "🎯 Nhiệm vụ",
+        "📚 Học tập AI",
+        "🍅 Pomodoro",
+        "🎴 Flashcard",
+        "📔 Nhật ký",
+        "🤖 Gia sư AI",
+        "📖 Dẫn chứng",
+        "🏆 Thành tích",
+        "🐰 Thú cưng",
+        "🛍️ Cửa hàng",
+        "📈 Thống kê",
+        "👑 Hành trình",
+        "📅 Lịch học",
+        "🛣️ Lộ trình AI",
+        "🌳 Cây tri thức",
+        "📞 Gọi AI",
+        "📹 Video AI",
+        "🔄 Lặp lại ngắt quãng",
+        "♟️ Cờ vua AI"
+    ]
+)
+st.sidebar.markdown("---")
+st.sidebar.success(random.choice(["🐰 Hôm nay cùng cố gắng nhé", "🌸 Mỗi ngày tiến bộ 1%", "🐱 Bạn đang làm rất tốt"]))
+st.sidebar.info(random.choice(["🐰 Nghỉ chút rồi học tiếp nhé", "🐰 Mình tin bạn làm được"]))
 
-def get_next_review_time(card):
-    if card["next_review"]:
-        return datetime.fromisoformat(card["next_review"])
-    return None
+# Hiển thị thông báo nhắc SRS trong sidebar
+due_srs = get_due_srs_cards()
+if due_srs:
+    st.sidebar.warning(f"🔄 Bạn có {len(due_srs)} thẻ cần ôn tập ngay!", icon="⏰")
+else:
+    st.sidebar.success("✅ Không có thẻ nào quá hạn. Nghỉ ngơi thôi!")
 
-def format_interval(minutes):
-    if minutes < 60:
-        return f"{int(minutes)} phút"
-    elif minutes < 1440:
-        hours = minutes / 60
-        return f"{int(hours)} giờ" if hours == int(hours) else f"{hours:.1f} giờ"
-    else:
-        days = minutes / 1440
-        return f"{int(days)} ngày" if days == int(days) else f"{days:.1f} ngày"
+# ==============================
+# TRANG CHỦ
+# ==============================
+if menu == "🏠 Trang chủ":
+    st.markdown("<h1 class='cute-title'>🌸 Study Garden AI</h1>", unsafe_allow_html=True)
+    col1, col2, col3 = st.columns(3)
+    col1.metric("⭐ XP", xp_data["xp"])
+    col2.metric("🌱 Level", xp_data["level"])
+    col3.metric("🔥 Chuỗi học", streak["days"])
+    st.markdown("---")
+    st.subheader("🐰 Chào ngày mới")
+    st.info("Mỗi ngày tiến bộ 1%, tương lai sẽ khác.")
+    if due_srs:
+        st.warning(f"📚 Hôm nay bạn có {len(due_srs)} thẻ cần ôn theo phương pháp lặp lại ngắt quãng. Hãy vào mục '🔄 Lặp lại ngắt quãng' để học ngay!")
 
-# ============================================
-# SPACED REPETITION MODULE
-# Học thông minh với lịch nhắc khoa học
-# Dành cho Study Garden AI
-# ============================================
-
-import streamlit as st
-import json
-import os
-from datetime import datetime, timedelta
-import pandas as pd
-import plotly.express as px
-
-# === CẤU HÌNH TRANG ===
-st.set_page_config(page_title="Spaced Repetition - Học thông minh", page_icon="⏰", layout="wide")
-
-st.markdown("""
-<style>
-    .sr-card {
-        background: white;
-        border-radius: 20px;
-        padding: 20px;
-        margin-bottom: 15px;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.05);
-        border-left: 5px solid #4CAF50;
-    }
-    .due-today {
-        border-left-color: #FF9800;
-        background: #FFF8E1;
-    }
-    .overdue {
-        border-left-color: #F44336;
-        background: #FFEBEE;
-    }
-    .topic-title {
-        font-size: 1.2rem;
-        font-weight: bold;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-# === THƯ MỤC LƯU TRỮ ===
-DATA_DIR = "sr_data"
-if not os.path.exists(DATA_DIR):
-    os.makedirs(DATA_DIR)
-
-# === HÀM ĐỌC/GHI ===
-def load_topics():
-    path = os.path.join(DATA_DIR, "topics.json")
-    if os.path.exists(path):
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {}
-
-def save_topics(topics):
-    path = os.path.join(DATA_DIR, "topics.json")
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(topics, f, ensure_ascii=False, indent=2)
-
-def load_schedule():
-    path = os.path.join(DATA_DIR, "schedule.json")
-    if os.path.exists(path):
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {}
-
-def save_schedule(schedule):
-    path = os.path.join(DATA_DIR, "schedule.json")
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(schedule, f, ensure_ascii=False, indent=2)
-
-# === CÁC MỐC THỜI GIAN THEO KHOA HỌC ===
-# Dựa trên hệ thống Leitner và nghiên cứu về spaced repetition
-# Các interval (phút) sau mỗi lần học thành công
-INTERVALS = [5, 30, 120, 480, 1440, 4320, 10080, 43200]  # 5 phút, 30p, 2h, 8h, 1 ngày, 3 ngày, 1 tuần, 30 ngày
-INTERVAL_NAMES = ["Lần 1 (5p)", "Lần 2 (30p)", "Lần 3 (2h)", "Lần 4 (8h)", "Lần 5 (1 ngày)", "Lần 6 (3 ngày)", "Lần 7 (1 tuần)", "Lần 8 (30 ngày)"]
-
-def get_next_review_time(last_review, stage):
-    """stage: số lần đã học thành công (0-index)"""
-    if stage >= len(INTERVALS):
-        stage = len(INTERVALS) - 1
-    interval_minutes = INTERVALS[stage]
-    return last_review + timedelta(minutes=interval_minutes)
-
-def get_overdue_status(last_review, stage):
-    """Trả về trạng thái: 'due', 'overdue', 'future'"""
-    next_review = get_next_review_time(last_review, stage)
-    now = datetime.now()
-    if now >= next_review:
-        return "due" if now - next_review < timedelta(hours=1) else "overdue"
-    return "future"
-
-# === LOGIN ĐƠN GIẢN (để mỗi người dùng riêng) ===
-if "sr_user" not in st.session_state:
-    st.session_state.sr_user = None
-
-if not st.session_state.sr_user:
-    st.title("⏰ Spaced Repetition - Học thông minh")
-    st.write("Nhập tên của bạn để bắt đầu (dữ liệu được lưu riêng)")
-    user = st.text_input("Tên của bạn")
-    if st.button("Bắt đầu"):
-        if user:
-            st.session_state.sr_user = user
+# ==============================
+# NHIỆM VỤ
+# ==============================
+elif menu == "🎯 Nhiệm vụ":
+    st.title("🎯 Nhiệm vụ hôm nay")
+    new_task = st.text_input("Thêm nhiệm vụ")
+    if st.button("➕ Thêm") and new_task:
+        tasks.append({"name": new_task, "done": False})
+        save_json(TASK_FILE, tasks)
+        st.rerun()
+    for i, task in enumerate(tasks):
+        done = st.checkbox(task["name"], value=task["done"], key=f"task_{i}")
+        if done != task["done"]:
+            tasks[i]["done"] = done
+            save_json(TASK_FILE, tasks)
+            if done:
+                add_xp(2)
             st.rerun()
-    st.stop()
-
-user = st.session_state.sr_user
-
-# === DỮ LIỆU CỦA USER ===
-topics = load_topics().get(user, {})
-schedule = load_schedule().get(user, {})
-
-# === HÀM LƯU CHO USER ===
-def save_user_data():
-    all_topics = load_topics()
-    all_topics[user] = topics
-    save_topics(all_topics)
-    all_schedule = load_schedule()
-    all_schedule[user] = schedule
-    save_schedule(all_schedule)
-
-# === GIAO DIỆN CHÍNH ===
-st.sidebar.title(f"👤 {user}")
-menu = st.sidebar.radio("Menu", ["📚 Thêm nội dung mới", "📖 Ôn tập hôm nay", "📊 Thống kê", "⚙️ Quản lý"])
-
-# --- 1. THÊM NỘI DUNG MỚI ---
-if menu == "📚 Thêm nội dung mới":
-    st.title("📚 Thêm chủ đề / nội dung cần ghi nhớ")
-    with st.form("new_topic"):
-        topic_name = st.text_input("Tên chủ đề (ví dụ: Toán - 1+1=2, Tiếng Anh - từ vựng, Lịch sử - mốc thời gian)")
-        content = st.text_area("Nội dung chi tiết (công thức, câu hỏi, ghi chú,...)", height=150)
-        submitted = st.form_submit_button("➕ Thêm vào lịch học")
-    
-    if submitted and topic_name and content:
-        if topic_name in topics:
-            st.warning("Chủ đề đã tồn tại. Bạn có thể xóa cũ hoặc đổi tên.")
+    st.markdown("---")
+    if st.button("🎲 Quay nhiệm vụ"):
+        pending = [t["name"] for t in tasks if not t["done"]]
+        if pending:
+            st.success(f"📚 Làm trước: {random.choice(pending)}")
         else:
-            now = datetime.now()
-            topics[topic_name] = {
-                "content": content,
-                "stage": 0,  # số lần đã học thành công
-                "last_review": now.isoformat(),
-                "created": now.isoformat()
-            }
-            # Ghi vào schedule để biết ngày nào cần ôn
-            next_review = get_next_review_time(now, 0)
-            date_key = next_review.strftime("%Y-%m-%d")
-            if date_key not in schedule:
-                schedule[date_key] = []
-            schedule[date_key].append(topic_name)
-            save_user_data()
-            st.success(f"✅ Đã thêm chủ đề '{topic_name}'. Lần ôn đầu tiên sau 5 phút!")
+            st.info("Đã hoàn thành hết nhiệm vụ")
 
-# --- 2. ÔN TẬP HÔM NAY ---
-elif menu == "📖 Ôn tập hôm nay":
-    st.title("📖 Ôn tập hôm nay")
-    today = datetime.now().strftime("%Y-%m-%d")
-    due_topics = schedule.get(today, [])
-    
-    # Nếu không có topic nào theo lịch, hiển thị tất cả topic đang trong trạng thái due/overdue
-    if not due_topics:
-        # Duyệt qua tất cả topics để tìm topic cần ôn
-        due_topics = []
-        for name, data in topics.items():
-            last_review = datetime.fromisoformat(data["last_review"])
-            stage = data["stage"]
-            next_review = get_next_review_time(last_review, stage)
-            if datetime.now() >= next_review:
-                due_topics.append(name)
-        due_topics = list(set(due_topics))  # loại trùng
-    
-    if not due_topics:
-        st.info("🎉 Hôm nay không có nội dung nào cần ôn tập. Hãy nghỉ ngơi hoặc thêm chủ đề mới.")
-    else:
-        st.write(f"Hôm nay cần ôn **{len(due_topics)}** chủ đề:")
-        for topic_name in due_topics:
-            data = topics.get(topic_name)
-            if not data:
-                continue
-            last_review = datetime.fromisoformat(data["last_review"])
-            stage = data["stage"]
-            next_review = get_next_review_time(last_review, stage)
-            status = get_overdue_status(last_review, stage)
-            
-            # Hiển thị card
-            if status == "overdue":
-                st.markdown(f"<div class='sr-card overdue'>", unsafe_allow_html=True)
-                st.markdown(f"<span class='topic-title'>⚠️ QUÁ HẠN: {topic_name}</span>", unsafe_allow_html=True)
-            elif status == "due":
-                st.markdown(f"<div class='sr-card due-today'>", unsafe_allow_html=True)
-                st.markdown(f"<span class='topic-title'>🔔 ĐẾN LÚC ÔN: {topic_name}</span>", unsafe_allow_html=True)
-            else:
-                st.markdown(f"<div class='sr-card'>", unsafe_allow_html=True)
-                st.markdown(f"<span class='topic-title'>📌 {topic_name}</span>", unsafe_allow_html=True)
-            
-            st.write(f"**Nội dung:** {data['content']}")
-            st.write(f"Lần ôn thứ: {stage+1}/{len(INTERVALS)} (Kế tiếp sau: {INTERVAL_NAMES[stage] if stage < len(INTERVALS) else 'Hoàn thành'})")
-            st.write(f"Lần học cuối: {last_review.strftime('%H:%M %d/%m/%Y')}")
-            st.write(f"Lịch ôn tiếp theo: {next_review.strftime('%H:%M %d/%m/%Y')}")
-            
-            # Nút "Đã học xong"
-            col1, col2 = st.columns([1, 4])
-            with col1:
-                if st.button("✅ Đã học xong", key=f"done_{topic_name}"):
-                    # Cập nhật stage, last_review, schedule
-                    new_stage = min(stage + 1, len(INTERVALS) - 1)
-                    topics[topic_name]["stage"] = new_stage
-                    topics[topic_name]["last_review"] = datetime.now().isoformat()
-                    # Xóa khỏi schedule cũ (ngày hôm nay) – thực tế không cần, nhưng sẽ xóa khi refresh
-                    # Tính lịch tiếp theo
-                    if new_stage < len(INTERVALS):
-                        next_review_new = get_next_review_time(datetime.now(), new_stage)
-                        next_date = next_review_new.strftime("%Y-%m-%d")
-                        if next_date not in schedule:
-                            schedule[next_date] = []
-                        if topic_name not in schedule[next_date]:
-                            schedule[next_date].append(topic_name)
-                    # Xóa topic khỏi schedule của hôm nay (nếu có)
-                    today_schedule = schedule.get(today, [])
-                    if topic_name in today_schedule:
-                        today_schedule.remove(topic_name)
-                        schedule[today] = today_schedule
-                    save_user_data()
-                    st.success(f"✅ Đã ghi nhận! Lần ôn tiếp theo sau {INTERVAL_NAMES[new_stage] if new_stage < len(INTERVALS) else 'đã hoàn thành'}")
-                    st.rerun()
-            with col2:
-                if st.button("❌ Tạm bỏ qua", key=f"skip_{topic_name}"):
-                    # Không làm gì, chỉ bỏ qua lần này (không thay đổi stage)
-                    st.info("Đã bỏ qua, sẽ nhắc lại trong lần sau.")
-            st.markdown("</div>", unsafe_allow_html=True)
-            st.markdown("---")
+# ==============================
+# HỌC TẬP AI
+# ==============================
+elif menu == "📚 Học tập AI":
+    st.title("📚 Học tập AI")
+    uploaded = st.file_uploader("Tải tài liệu (PDF, DOCX, PPTX, TXT)", type=["pdf","docx","pptx","txt"])
+    text_content = extract_text_from_file(uploaded) if uploaded else ""
+    if uploaded and text_content:
+        st.success("Đã đọc tài liệu")
+        with st.expander("Xem nội dung trích xuất"):
+            st.text(text_content[:2000])
+        tab1, tab2, tab3, tab4 = st.tabs(["📖 Tóm tắt", "🧠 Feynman", "🎴 Flashcard", "❓ Quiz"])
+        with tab1:
+            if st.button("Tạo tóm tắt"):
+                prompt = f"Tóm tắt tài liệu sau ngắn gọn, có gạch đầu dòng:\n{text_content[:8000]}"
+                res = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role":"user","content":prompt}])
+                st.write(res.choices[0].message.content)
+        with tab2:
+            if st.button("Giải thích dễ hiểu (Feynman)"):
+                prompt = f"Giải thích tài liệu như cho học sinh lớp 5:\n{text_content[:8000]}"
+                res = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role":"user","content":prompt}])
+                st.write(res.choices[0].message.content)
+        with tab3:
+            if st.button("Tạo Flashcard"):
+                prompt = f"Hãy tạo 10 flashcard (câu hỏi và đáp án) từ tài liệu:\n{text_content[:8000]}"
+                res = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role":"user","content":prompt}])
+                st.write(res.choices[0].message.content)
+        with tab4:
+            if st.button("Tạo Quiz trắc nghiệm"):
+                prompt = f"Tạo 10 câu hỏi trắc nghiệm có đáp án từ tài liệu:\n{text_content[:8000]}"
+                res = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role":"user","content":prompt}])
+                st.write(res.choices[0].message.content)
 
-# --- 3. THỐNG KÊ (sẽ ở phần 2) ---
-elif menu == "📊 Thống kê":
-    st.title("📊 Thống kê quá trình học")
-    if not topics:
-        st.info("Chưa có dữ liệu")
-    else:
-        # Tính số lần đã học
-        stages = [data["stage"] for data in topics.values()]
-        df = pd.DataFrame({"Chủ đề": list(topics.keys()), "Số lần ôn": stages})
-        st.dataframe(df)
-        fig = px.bar(df, x="Chủ đề", y="Số lần ôn", title="Tiến độ ôn tập")
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # Dự đoán lịch ôn sắp tới
-        upcoming = []
-        for name, data in topics.items():
-            last = datetime.fromisoformat(data["last_review"])
-            stage = data["stage"]
-            if stage < len(INTERVALS):
-                next_time = get_next_review_time(last, stage)
-                upcoming.append({"Chủ đề": name, "Lần ôn tiếp theo": next_time.strftime("%d/%m/%Y %H:%M"), "Giai đoạn": stage+1})
-        if upcoming:
-            st.subheader("🗓️ Lịch ôn sắp tới")
-            st.dataframe(pd.DataFrame(upcoming))
+# ==============================
+# POMODORO
+# ==============================
+elif menu == "🍅 Pomodoro":
+    st.title("🍅 Pomodoro")
+    minute = st.selectbox("Thời gian (phút)", [25, 30, 45, 60])
+    if st.button("🚀 Bắt đầu"):
+        st.success(f"Bắt đầu phiên {minute} phút! Hẹn giờ...")
+        # Đếm giờ không block quá nặng
+        progress_bar = st.progress(0)
+        for i in range(minute * 60):
+            time.sleep(1)
+            progress_bar.progress((i+1)/(minute*60))
+        st.balloons()
+        st.info("Kết thúc phiên! Nghỉ ngơi 5 phút nhé.")
+        add_xp(10)
 
-# --- 4. QUẢN LÝ (xóa, sửa) ---
-elif menu == "⚙️ Quản lý":
-    st.title("⚙️ Quản lý chủ đề")
-    if not topics:
-        st.info("Chưa có chủ đề nào.")
-    else:
-        for name in list(topics.keys()):
-            col1, col2, col3 = st.columns([4,1,1])
-            col1.write(name)
-            if col2.button("✏️ Sửa", key=f"edit_{name}"):
-                # Hiện form sửa (đơn giản: dùng session)
-                st.session_state.edit_topic = name
-            if col3.button("🗑️ Xóa", key=f"del_{name}"):
-                # Xóa khỏi topics và schedule
-                del topics[name]
-                # Xóa trong schedule
-                for date in schedule:
-                    if name in schedule[date]:
-                        schedule[date].remove(name)
-                save_user_data()
-                st.success(f"Đã xóa '{name}'")
+# ==============================
+# FLASHCARD
+# ==============================
+elif menu == "🎴 Flashcard":
+    st.title("🎴 Flashcard")
+    with st.form("new_flashcard"):
+        question = st.text_input("Câu hỏi")
+        answer = st.text_input("Đáp án")
+        if st.form_submit_button("💾 Lưu thẻ"):
+            if question and answer:
+                flashcards.append({"question": question, "answer": answer})
+                save_json(FLASHCARD_FILE, flashcards)
+                st.success("Đã lưu")
                 st.rerun()
-        
-        if "edit_topic" in st.session_state:
-            name = st.session_state.edit_topic
-            data = topics[name]
-            with st.form("edit_form"):
-                new_content = st.text_area("Nội dung mới", value=data["content"])
-                if st.form_submit_button("Cập nhật"):
-                    topics[name]["content"] = new_content
-                    save_user_data()
-                    del st.session_state.edit_topic
-                    st.success("Đã cập nhật")
-                    st.rerun()
+    if flashcards:
+        for i, card in enumerate(flashcards):
+            with st.expander(card["question"]):
+                st.success(card["answer"])
+    else:
+        st.info("Chưa có flashcard nào")
 
-# === CHẠY ỨNG DỤNG ===
-if __name__ == "__main__":
-    # Không cần thêm
-    pass
+# ==============================
+# NHẬT KÝ
+# ==============================
+elif menu == "📔 Nhật ký":
+    st.title("📔 Nhật ký học tập")
+    note = st.text_area("Hôm nay học gì?")
+    if st.button("💾 Lưu") and note:
+        journals.append({"date": datetime.now().strftime("%d/%m/%Y %H:%M"), "content": note})
+        save_json(JOURNAL_FILE, journals)
+        st.success("Đã lưu")
+        st.rerun()
+    for item in reversed(journals[-10:]):
+        st.markdown(f"<div class='main-card'><b>{item['date']}</b><br>{item['content']}</div>", unsafe_allow_html=True)
+
+# ==============================
+# GIA SƯ AI
+# ==============================
+elif menu == "🤖 Gia sư AI":
+    st.title("🤖 Gia sư AI")
+    if "tutor_chat" not in st.session_state:
+        st.session_state.tutor_chat = []
+    for msg in st.session_state.tutor_chat:
+        with st.chat_message(msg["role"]):
+            st.write(msg["content"])
+    prompt = st.chat_input("Nhập câu hỏi...")
+    if prompt:
+        st.session_state.tutor_chat.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.write(prompt)
+        with st.spinner("AI đang suy nghĩ..."):
+            res = client.chat.completions.create(
+                model="llama-3.1-70b-versatile",
+                messages=[{"role": "user", "content": prompt}]
+            )
+            answer = res.choices[0].message.content
+        st.session_state.tutor_chat.append({"role": "assistant", "content": answer})
+        with st.chat_message("assistant"):
+            st.write(answer)
+            if st.button("🔊 Đọc", key="tts"):
+                speak_text(answer)
+
+# ==============================
+# DẪN CHỨNG VĂN HỌC
+# ==============================
+elif menu == "📖 Dẫn chứng":
+    st.title("📖 Ngân hàng dẫn chứng")
+    idx = datetime.now().timetuple().tm_yday % len(evidences)
+    ev = evidences[idx]
+    st.markdown(f"**📖 Hôm nay:** {ev['title']} - {ev['author']}\n\n{ev['content']}")
+    yesterday = evidences[idx-1] if idx > 0 else None
+    if yesterday:
+        ans = st.text_input("🤔 Hôm qua em học dẫn chứng gì?")
+        if st.button("Kiểm tra"):
+            if yesterday["title"].lower() in ans.lower():
+                st.success("🎉 Chính xác! +20 XP")
+                add_xp(20)
+            else:
+                st.error(f"Đáp án: {yesterday['title']}")
+
+# ==============================
+# THÀNH TÍCH (HUY HIỆU)
+# ==============================
+elif menu == "🏆 Thành tích":
+    st.title("🏆 Bộ sưu tập huy hiệu")
+    if badges:
+        for b in badges:
+            st.success(b)
+    else:
+        st.info("Chưa mở khóa huy hiệu nào. Hãy chăm chỉ học tập!")
+
+# ==============================
+# THÚ CƯNG
+# ==============================
+elif menu == "🐰 Thú cưng":
+    st.title("🐰 Thỏ học tập")
+    st.markdown("# 🐰")
+    st.write(f"Level thỏ: {pet['level']}")
+    if xp_data["level"] >= pet["level"] * 2:
+        pet["level"] += 1
+        save_json(PET_FILE, pet)
+        st.success("🐰 Thỏ đã lớn hơn!")
+
+# ==============================
+# CỬA HÀNG
+# ==============================
+elif menu == "🛍️ Cửa hàng":
+    st.title("🛍️ Cửa hàng thỏ")
+    shop_items = [
+        {"name": "🐰 Nơ hồng", "cost": 100},
+        {"name": "🌸 Vòng hoa", "cost": 150},
+        {"name": "🥕 Cà rốt vàng", "cost": 200},
+        {"name": "👑 Vương miện", "cost": 500}
+    ]
+    for item in shop_items:
+        col1, col2 = st.columns([4,1])
+        col1.write(item["name"])
+        col2.write(f"{item['cost']} XP")
+        if col2.button("Mua", key=item["name"]):
+            if xp_data["xp"] >= item["cost"]:
+                add_xp(-item["cost"])
+                st.success(f"Đã mua {item['name']}!")
+                st.rerun()
+            else:
+                st.warning("Không đủ XP")
+
+# ==============================
+# THỐNG KÊ
+# ==============================
+elif menu == "📈 Thống kê":
+    st.title("📈 Thống kê học tập")
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Level", xp_data["level"])
+    col2.metric("XP", xp_data["xp"])
+    col3.metric("Chuỗi học", streak["days"])
+    col4.metric("Flashcard", len(flashcards))
+    df_stats = pd.DataFrame({
+        "Chỉ số": ["XP", "Level", "Streak"],
+        "Giá trị": [xp_data["xp"], xp_data["level"], streak["days"]]
+    })
+    st.bar_chart(df_stats.set_index("Chỉ số"))
+
+# ==============================
+# HÀNH TRÌNH
+# ==============================
+elif menu == "👑 Hành trình":
+    st.title("👑 Hành trình học tập")
+    st.markdown(f"**Level:** {xp_data['level']}  |  **XP:** {xp_data['xp']}  |  **Chuỗi ngày:** {streak['days']}")
+    if xp_data["level"] < 5:
+        st.info("🌱 Tân binh học tập")
+    elif xp_data["level"] < 10:
+        st.info("🔥 Người chăm chỉ")
+    elif xp_data["level"] < 20:
+        st.success("⭐ Học giả trẻ")
+    else:
+        st.success("👑 Học bá huyền thoại")
+
+# ==============================
+# LỊCH HỌC
+# ==============================
+elif menu == "📅 Lịch học":
+    st.title("📅 Kế hoạch tuần")
+    days_list = ["Thứ 2", "Thứ 3", "Thứ 4", "Thứ 5", "Thứ 6", "Thứ 7", "Chủ Nhật"]
+    # Lưu lịch học vào file
+    schedule_file = os.path.join(DATA_FOLDER, "schedule.json")
+    schedule = load_json(schedule_file, {})
+    for d in days_list:
+        new_val = st.text_input(d, value=schedule.get(d, ""))
+        if new_val != schedule.get(d, ""):
+            schedule[d] = new_val
+            save_json(schedule_file, schedule)
+
+# ==============================
+# LỘ TRÌNH AI
+# ==============================
+elif menu == "🛣️ Lộ trình AI":
+    st.title("🛣️ AI Lộ trình")
+    goal = st.text_input("Mục tiêu học tập của bạn")
+    if st.button("Tạo lộ trình") and goal:
+        prompt = f"Hãy tạo lộ trình học tập chi tiết theo tuần cho mục tiêu: {goal}"
+        res = client.chat.completions.create(model="llama-3.1-70b-versatile", messages=[{"role":"user","content":prompt}])
+        st.write(res.choices[0].message.content)
+
+# ==============================
+# CÂY TRI THỨC
+# ==============================
+elif menu == "🌳 Cây tri thức":
+    st.title("🌳 Cây tri thức")
+    lvl = xp_data["level"]
+    if lvl < 3:
+        st.markdown("# 🌱")
+    elif lvl < 8:
+        st.markdown("# 🌿")
+    elif lvl < 15:
+        st.markdown("# 🌳")
+    else:
+        st.markdown("# 🌲")
+    st.write(f"Cấp độ cây: {lvl}")
+
+# ==============================
+# GỌI AI (Upload ghi âm + Edge TTS)
+# ==============================
+elif menu == "📞 Gọi AI":
+    st.title("📞 Gọi AI (thử nghiệm)")
+    st.info("🎤 Tải file ghi âm giọng nói của bạn (WAV, MP3, M4A). AI sẽ trả lời bằng văn bản và có thể đọc thành giọng (Edge TTS).")
+    audio_file = st.file_uploader("Chọn file ghi âm", type=["wav", "mp3", "m4a"])
+    if audio_file:
+        with open("temp_audio.wav", "wb") as f:
+            f.write(audio_file.read())
+        st.audio("temp_audio.wav")
+        st.warning("⚠️ Tính năng nhận dạng giọng nói chưa được tích hợp. AI sẽ trả lời dựa trên nội dung mẫu.")
+        prompt_text = "Người dùng vừa gửi một file ghi âm. Hãy trả lời như một gia sư nam thân thiện, động viên học tập."
+        with st.spinner("AI đang xử lý..."):
+            response = client.chat.completions.create(
+                model="llama-3.1-8b-instant",
+                messages=[{"role": "user", "content": prompt_text}]
+            )
+            reply = response.choices[0].message.content
+        st.success(f"📝 AI trả lời: {reply}")
+        if st.button("🔊 Đọc trả lời bằng Edge TTS"):
+            with st.spinner("Đang tạo giọng nói..."):
+                audio_path = run_async_tts(reply)
+                if audio_path and os.path.exists(audio_path):
+                    st.audio(audio_path)
+                    st.success("Đã phát giọng đọc")
+                else:
+                    st.error("Không thể tạo giọng nói. Hãy cài thư viện edge-tts (pip install edge-tts)")
+
+# ==============================
+# VIDEO AI (Camera + mô tả ảnh)
+# ==============================
+elif menu == "📹 Video AI":
+    st.title("📹 Video AI (chụp ảnh từ camera)")
+    st.info("Bật camera, chụp ảnh, AI sẽ mô tả nội dung trong ảnh.")
+    image = st.camera_input("Bật camera và chụp ảnh")
+    if image:
+        st.image(image, width=400, caption="Ảnh vừa chụp")
+        if st.button("🧠 Phân tích ảnh với AI"):
+            with st.spinner("AI đang xem ảnh..."):
+                prompt = "Hãy tưởng tượng bạn nhìn thấy một bức ảnh chụp từ camera. Hãy đưa ra lời khuyên học tập tích cực, động viên người dùng."
+                response = client.chat.completions.create(
+                    model="llama-3.1-8b-instant",
+                    messages=[{"role": "user", "content": prompt}]
+                )
+                st.success(response.choices[0].message.content)
+                st.warning("Lưu ý: AI chưa thực sự nhìn thấy ảnh (chỉ mô phỏng). Để nhận diện ảnh thật, cần dùng mô hình vision như GPT-4V.")
+
+# ==============================
+# LẶP LẠI NGẮT QUÃNG (SPACED REPETITION)
+# ==============================
+elif menu == "🔄 Lặp lại ngắt quãng":
+    st.title("🔄 Lặp lại ngắt quãng – Phương pháp khoa học")
+    st.markdown("""
+    **📌 Nguyên lý:** Ôn tập đúng thời điểm vàng giúp ghi nhớ sâu hơn.
+    - 📈 Chu kỳ: 5 phút → 30 phút → 2 giờ → 8 giờ → 1 ngày → 2 ngày → 5 ngày → 10 ngày → 20 ngày → 40 ngày.
+    - ✅ Khi nhớ → tiến đến mốc tiếp theo.
+    - ❌ Khi quên → quay lại mốc 5 phút.
+    """)
+    
+    # Thêm thẻ mới
+    with st.expander("➕ Thêm nội dung cần ghi nhớ"):
+        new_content = st.text_area("Nội dung (công thức, sự kiện, từ vựng, ...)")
+        if st.button("📌 Lưu thẻ") and new_content:
+            add_srs_card(new_content)
+            st.success("Đã thêm vào hệ thống lặp lại! Bạn sẽ được nhắc đúng lúc.")
+            st.rerun()
+    
+    # Hiển thị danh sách thẻ cần ôn ngay
+    due_cards = get_due_srs_cards()
+    st.subheader(f"📚 Ôn tập ngay – {len(due_cards)} thẻ cần xem lại")
+    if not due_cards:
+        st.info("🎉 Tuyệt vời! Hiện tại không có thẻ nào cần ôn. Hãy thêm thẻ mới để bắt đầu.")
+    else:
+        for card in due_cards:
+            with st.container():
+                st.markdown(f"**📝 Nội dung:** {card['content']}")
+                st.caption(f"🔁 Giai đoạn {card['stage']+1}/{len(SRS_INTERVALS)} | Hạn ôn: {datetime.fromisoformat(card['next_review']).strftime('%H:%M %d/%m/%Y')}")
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("✅ Đã nhớ", key=f"remember_{card['id']}"):
+                        review_srs_card(card['id'], remembered=True)
+                        add_xp(3)
+                        st.success("+3 XP! Tiến tới mốc tiếp theo.")
+                        st.rerun()
+                with col2:
+                    if st.button("❌ Quên rồi", key=f"forget_{card['id']}"):
+                        review_srs_card(card['id'], remembered=False)
+                        st.warning("Đã reset chu kỳ. Hãy học lại sau 5 phút.")
+                        st.rerun()
+                st.markdown("---")
+    
+    # Hiển thị tất cả thẻ
+    with st.expander("🗂️ Tất cả thẻ đang theo dõi"):
+        for card in srs_data:
+            next_time = datetime.fromisoformat(card['next_review']).strftime('%H:%M %d/%m/%Y')
+            st.write(f"**{card['content']}** – Stage {card['stage']+1} – Ôn lúc: {next_time}")
+    # === THỐNG KÊ SRS ===
+    with st.expander("📊 Thống kê hiệu quả ôn tập"):
+        total_cards = len(srs_data)
+        mastered = sum(1 for c in srs_data if c["stage"] >= len(SRS_INTERVALS)-2)  # từ stage 8 trở lên
+        due_count = len(get_due_srs_cards())
+        col_a, col_b, col_c = st.columns(3)
+        col_a.metric("Tổng số thẻ", total_cards)
+        col_b.metric("Thẻ thành thạo", mastered)
+        col_c.metric("Thẻ cần ôn", due_count)
+        
+        # Biểu đồ tiến độ
+        stage_counts = [0]*len(SRS_INTERVALS)
+        for c in srs_data:
+            stage_counts[min(c["stage"], len(SRS_INTERVALS)-1)] += 1
+        st.bar_chart(pd.DataFrame({
+            "Giai đoạn": [f"{i+1}" for i in range(len(SRS_INTERVALS))],
+            "Số thẻ": stage_counts
+        }).set_index("Giai đoạn"))
+# ==============================
+# CỜ VUA AI
+# ==============================
+elif menu == "♟️ Cờ vua AI":
+    st.title("♟️ Cờ vua với AI (Groq)")
+    if not CHESS_AVAILABLE:
+        st.error("Thiếu thư viện python-chess. Hãy chạy: pip install python-chess")
+        st.stop()
+    
+    # Khởi tạo bàn cờ trong session state
+    if "chess_board" not in st.session_state:
+        st.session_state.chess_board = chess.Board()
+        st.session_state.chess_move_history = []  # lưu các nước đi dạng UCI
+        st.session_state.chess_game_over = False
+        st.session_state.chess_last_move = None
+    
+    board = st.session_state.chess_board
+    move_history = st.session_state.chess_move_history
+    
+    # Hiển thị bàn cờ dạng SVG
+    board_svg = chess.svg.board(board=board, size=400)
+    st.components.v1.html(board_svg, height=450, width=450)
+    
+    # Hiển thị trạng thái
+    if board.is_checkmate():
+        winner = "Trắng" if board.turn == chess.BLACK else "Đen"
+        st.error(f"🏆 Chiếu hết! {winner} thắng.")
+        st.session_state.chess_game_over = True
+    elif board.is_stalemate():
+        st.warning("♟️ Hết nước đi (stalemate). Hòa.")
+        st.session_state.chess_game_over = True
+    elif board.is_check():
+        st.warning("⚠️ Vua đang bị chiếu!")
+    
+    if not st.session_state.chess_game_over:
+        # Người chơi là quân trắng (đi trước)
+        if board.turn == chess.WHITE:
+            st.subheader("🏃 Nước đi của bạn")
+                        # Nút gợi ý nước đi từ AI
+            if st.button("💡 Gợi ý nước đi cho tôi"):
+                with st.spinner("AI đang phân tích..."):
+                    legal_san = [board.san(m) for m in board.legal_moves]
+                    hint_prompt = f"Thế cờ hiện tại (FEN: {board.fen()}). Hãy đề xuất một nước đi tốt nhất cho quân Trắng trong các nước sau: {', '.join(legal_san)}. Chỉ trả lời duy nhất tên nước đi (dạng SAN, ví dụ: e4, Nf3)."
+                    hint_res = client.chat.completions.create(
+                        model="llama-3.1-8b-instant",
+                        messages=[{"role": "user", "content": hint_prompt}],
+                        temperature=0.3
+                    )
+                    st.info(f"💡 AI gợi ý: {hint_res.choices[0].message.content.strip()}")
+            # Nhập nước đi bằng UCI (ví dụ: e2e4)
+            move_uci = st.text_input("Nhập nước đi (UCI, ví dụ: e2e4, g1f3):", key="uci_input")
+            if st.button("Thực hiện nước đi"):
+                try:
+                    move = chess.Move.from_uci(move_uci)
+                    if move in board.legal_moves:
+                        board.push(move)
+                        move_history.append(move_uci)
+                        st.session_state.chess_board = board
+                        st.rerun()
+                    else:
+                        st.error("Nước đi không hợp lệ!")
+                except:
+                    st.error("Định dạng UCI sai. Hãy nhập đúng.")
+        else:
+            # Lượt AI (quân đen)
+            st.subheader("🤖 AI đang suy nghĩ...")
+            with st.spinner("AI tính toán nước đi tối ưu..."):
+                # Hỏi Groq chọn nước đi hay nhất
+                # Lấy danh sách nước đi hợp lệ dạng text
+                legal_moves = [board.san(move) for move in board.legal_moves]  # SAN dễ đọc
+                board_fen = board.fen()
+                prompt = f"""
+Bạn là một đại kiện tướng cờ vua. Hãy phân tích thế cờ sau (FEN: {board_fen}) và chọn MỘT nước đi tốt nhất cho quân Đen. 
+Các nước đi hợp lệ (dạng SAN): {', '.join(legal_moves)}.
+Chỉ trả lời duy nhất một nước đi dưới dạng SAN (ví dụ: Nf6, e5, O-O). Không giải thích gì thêm.
+"""
+                try:
+                    res = client.chat.completions.create(
+                        model="llama-3.1-8b-instant",
+                        messages=[{"role": "user", "content": prompt}],
+                        temperature=0.3
+                    )
+                    ai_move_san = res.choices[0].message.content.strip()
+                    # Chuyển SAN -> Move
+                    try:
+                        ai_move = board.parse_san(ai_move_san)
+                        if ai_move in board.legal_moves:
+                            board.push(ai_move)
+                            move_history.append(board.uci(ai_move))
+                            st.session_state.chess_board = board
+                            st.success(f"🤖 AI đi: {ai_move_san}")
+                            st.rerun()
+                        else:
+                            # Nếu AI trả lời sai, chọn nước đầu tiên
+                            st.warning(f"AI đề xuất {ai_move_san} không hợp lệ, chọn nước ngẫu nhiên.")
+                            first_move = list(board.legal_moves)[0]
+                            board.push(first_move)
+                            move_history.append(board.uci(first_move))
+                            st.session_state.chess_board = board
+                            st.rerun()
+                    except:
+                        # Lỗi parse, chọn nước đầu
+                        first_move = list(board.legal_moves)[0]
+                        board.push(first_move)
+                        move_history.append(board.uci(first_move))
+                        st.session_state.chess_board = board
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"Lỗi AI: {e}. AI sẽ đi nước đầu tiên.")
+                    first_move = list(board.legal_moves)[0]
+                    board.push(first_move)
+                    move_history.append(board.uci(first_move))
+                    st.session_state.chess_board = board
+                    st.rerun()
+    
+    # Nút phân tích ván đấu (hiển thị sau khi kết thúc)
+    if st.session_state.chess_game_over or st.button("📊 Phân tích ván đấu (sau khi kết thúc)"):
+        if len(move_history) > 0:
+            with st.spinner("AI đang phân tích toàn bộ ván cờ..."):
+                # Tạo ghi chép các nước đi dạng PGN đơn giản
+                game_moves = " ".join(move_history)
+                analysis_prompt = f"""
+Bạn là một huấn luyện viên cờ vua. Hãy phân tích ván đấu sau (các nước đi theo thứ tự): {game_moves}
+Hãy đánh giá từng giai đoạn: khai cuộc, trung cuộc, tàn cuộc.
+Chỉ ra điểm mạnh, điểm yếu của người chơi (quân trắng), và đề xuất cách cải thiện.
+Kết luận: Người chơi nên luyện tập khía cạnh nào?
+Trả lời bằng tiếng Việt, dễ hiểu, chi tiết.
+"""
+                analysis_res = client.chat.completions.create(
+                    model="llama-3.1-70b-versatile",
+                    messages=[{"role": "user", "content": analysis_prompt}]
+                )
+                st.markdown("### 🧠 Phân tích từ AI")
+                st.write(analysis_res.choices[0].message.content)
+                # Thưởng XP khi phân tích
+                add_xp(20)
+                st.success("+20 XP vì đã học hỏi từ ván cờ!")
+        else:
+            st.info("Chưa có nước đi nào để phân tích.")
+    
+    # Nút khởi động lại ván mới
+    if st.button("🔄 Chơi ván mới"):
+        st.session_state.chess_board = chess.Board()
+        st.session_state.chess_move_history = []
+        st.session_state.chess_game_over = False
+        st.rerun()
+
+# ==============================
+# KẾT THÚC
+# ==============================
